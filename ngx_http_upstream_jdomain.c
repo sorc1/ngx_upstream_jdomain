@@ -279,7 +279,7 @@ ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 	time_t			interval;
 	ngx_str_t		*value, domain, s;
 	ngx_int_t		default_port, max_ips;
-	ngx_uint_t		retry;
+	ngx_uint_t		retry, fail;
 	ngx_http_upstream_jdomain_peer_t		*paddr;
 	ngx_url_t		u;
 	ngx_uint_t		i;
@@ -288,6 +288,7 @@ ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 	default_port = 80;
 	max_ips = 20;
 	retry = 1;
+	fail = 1;
 	domain.data = NULL;
 	domain.len = 0;
 
@@ -357,6 +358,13 @@ ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
 			continue;
 		}
+
+		if (ngx_strncmp(value[i].data, "no_fail", 7) == 0) {
+			fail = 0;
+
+			continue;
+		}
+
 		goto invalid;
 
 	}
@@ -388,14 +396,19 @@ ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 	u.url = value[1];
 	u.default_port = (in_port_t) urcf->default_port;
 
-	for (i = 0; i < 2; i++) {
+	// in no-fail (fail=0) mode, perform two-pass URL parsing:
+	// validate upstream URL on the first pass and exit on error
+	// perform domain name resolution on the second pass but do *not* exit with error on failure
+	//
+	// in default (fail=1) mode, skip the first pass and exit on error
+	for (i = fail; i < 2; i++) {
 		u.no_resolve = (i == 0);
 		if (ngx_parse_url(cf->pool, &u) != NGX_OK) {
 			if (u.err) {
 				ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
 					"%s in upstream \"%V\"", u.err, &u.url);
 			}
-			if (u.no_resolve) {
+			if (u.no_resolve || fail) {
 				return NGX_CONF_ERROR;
 			}
 		}
