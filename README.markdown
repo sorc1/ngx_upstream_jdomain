@@ -18,11 +18,12 @@ Usage:
                                                                                                     
 Jdomain: 
 
-	* Syntax: jdomain <domain-name> [port=80] [max_ips=20] [retry_off]                              
+	* Syntax: jdomain <domain-name> [port=80] [max_ips=20] [retry_off] [no_fail]                    
 	* Context:    upstream                                                                          
 	* port:       Backend's listening port.                                                         
 	* max_ips:    IP buffer size.                                                                   
 	* retry_off:  Do not retry if one IP fails. 
+	* no_fail:    Do not exit with error in case domain name resolution fails at startup. 
 
 See http://wiki.nginx.org/HttpUpstreamJdomainModule for details.
 
