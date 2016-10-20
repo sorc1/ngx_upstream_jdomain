@@ -18,19 +18,25 @@ Usage:
                                                                                                     
 Jdomain: 
 
-	* Syntax: jdomain <domain-name> [port=80] [max_ips=20] [interval=1] [retry_off]
-	* Context:    upstream                                                                          
-	* port:       Backend's listening port.                                                         
-	* max_ips:    IP buffer size.
-	* interval:   How many seconds to resolve domain name.
-	* retry_off:  Do not retry if one IP fails. 
+	* Syntax: jdomain <domain-name> [port=80] [max_ips=20] [interval=1] [retry_off] [no_fail] [backup_file] [temp_backup_dir] [backup_fsync]
+	* Context:            upstream                                                                          
+	* port:               Backend's listening port.                                                         
+	* max_ips:            IP buffer size.
+	* interval:           How many seconds to resolve domain name.
+	* retry_off:          Do not retry if one IP fails.
+	* no_fail:            Allow nginx to start up even if DNS resolve fails.
+	* backup_file:        If DNS resolve fails at startup, load peers from this file.
+	* temp_backup_dir:    Directory where temporary backup files are stored prior to being moved in place of the [backup_file].
+	* backup_fsync:       Run fsync on temporary backup file before moving it.
 
 See https://www.nginx.com/resources/wiki/modules/domain_resolve/ for details.
 
-Author
+Authors
 ======
 
 wdaike <wdaike@163.com>, Baidu Inc.
+
+Victor Luchits <vluchits@gmail.com> Mail.Ru Group
 
 Copyright & License
 ===================
