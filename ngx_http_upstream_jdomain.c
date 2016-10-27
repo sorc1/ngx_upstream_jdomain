@@ -177,11 +177,9 @@ ngx_http_upstream_jdomain_dump_peers(ngx_http_upstream_jdomain_srv_conf_t *urcf,
 							"# domain %V\n", 
 							&urcf->resolved_domain);
 	for (i = 0; i < urcf->resolved_num; i++) {
-		struct sockaddr *addr;
 		ngx_http_upstream_jdomain_peer_t *peer;
 
 		peer = &urcf->peers[i];
-		addr = &peer->sockaddr;
 
 		buf_pos = ngx_snprintf(buf_pos, buf_last - buf_pos,
 								"server %V;\n", &peer->name);
@@ -706,7 +704,7 @@ ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 	urcf->upstream_retry = retry;
 	urcf->upstream_backup_file = backup_file;
 	urcf->upstream_temp_backup_dir = temp_backup_dir;
-	urcf->upstream_backup_fsync = 1;
+	urcf->upstream_backup_fsync = backup_fsync;
 
 	urcf->resolved_num = 0;
 	/*urcf->resolved_index = 0;*/
