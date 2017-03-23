@@ -154,7 +154,7 @@ ngx_http_upstream_jdomain_dump_peers(ngx_http_upstream_jdomain_srv_conf_t *urcf,
 		goto error;
 	}
 
-	tempfile_pos = ngx_snprintf(tempfile_pos, tempfile_last - tempfile_pos, "%V/jdomain_%V_%d.tmp", 
+	tempfile_pos = ngx_snprintf(tempfile_pos, tempfile_last - tempfile_pos, "%V/jdomain_%V_%d.tmp%Z", 
 		&urcf->upstream_temp_backup_dir, &urcf->resolved_domain, (unsigned)getpid());
 	tempfile_len = tempfile_pos - tempfile;
 
