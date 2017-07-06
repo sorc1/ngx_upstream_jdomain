@@ -138,7 +138,7 @@ ngx_http_upstream_jdomain_dump_peers(ngx_http_upstream_jdomain_srv_conf_t *urcf,
 		return NGX_OK;
 	}
 
-	ngx_memzero(&file, sizeof(ngx_open_file_t));
+	ngx_memzero(&file, sizeof(ngx_file_t));
 	file.fd = NGX_INVALID_FILE;
 	file.log = log;
 	file.name = urcf->upstream_backup_file;
