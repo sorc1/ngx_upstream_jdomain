@@ -360,6 +360,8 @@ ngx_http_upstream_jdomain_load_peers(ngx_http_upstream_jdomain_srv_conf_t *urcf,
 		}
 		((struct sockaddr_in6*)addr)->sin6_port = htons((u_short) urcf->default_port);
 #else
+		peer->socklen = u.addrs[0].socklen;
+
 		switch (addr->sa_family) {
 		case AF_INET6:
 			((struct sockaddr_in6*)addr)->sin6_port = htons((u_short) urcf->default_port);
@@ -367,6 +369,13 @@ ngx_http_upstream_jdomain_load_peers(ngx_http_upstream_jdomain_srv_conf_t *urcf,
 		default:
 			((struct sockaddr_in*)addr)->sin_port = htons((u_short) urcf->default_port);
 		}
+#endif
+		peer->name.data = peer->ipstr;
+		peer->name.len =
+#if (nginx_version) <= 1005002
+			ngx_sock_ntop(addr, peer->ipstr, NGX_SOCKADDR_STRLEN, 1);
+#else
+			ngx_sock_ntop(addr, peer->socklen, peer->ipstr, NGX_SOCKADDR_STRLEN, 1);
 #endif
 
 		ngx_log_error(NGX_LOG_NOTICE, log, 0,
