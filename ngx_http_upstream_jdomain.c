@@ -29,7 +29,7 @@ typedef struct {
 #endif
 } ngx_http_upstream_jdomain_peer_t;
 
-typedef struct {
+typedef struct ngx_http_upstream_jdomain_srv_conf {
 	ngx_http_upstream_jdomain_peer_t		*peers;
 	ngx_uint_t		default_port;
 
@@ -45,7 +45,16 @@ typedef struct {
 	ngx_str_t		upstream_backup_file;
 	ngx_str_t		upstream_temp_backup_dir;
 	ngx_uint_t		upstream_backup_fsync:1;
+
+	ngx_resolver_t	*resolver;
+	ngx_msec_t		resolver_timeout;
+
+	struct ngx_http_upstream_jdomain_srv_conf *next;
 } ngx_http_upstream_jdomain_srv_conf_t;
+
+typedef struct {
+	struct ngx_http_upstream_jdomain_srv_conf	*urcf_first;
+} ngx_http_upstream_jdomain_main_conf_t;
 
 typedef struct {
 	ngx_http_upstream_jdomain_srv_conf_t	*conf;
@@ -63,13 +72,20 @@ void ngx_http_upstream_save_jdomain_peer_session(ngx_peer_connection_t *pc,
     void *data);
 #endif
 
+static void* ngx_http_upstream_jdomain_create_main_conf(ngx_conf_t *cf);
+
 static char *ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd,
 	void *conf);
+
+static char *ngx_http_upstream_jdomain_resolver(ngx_conf_t *cf,
+	ngx_command_t *cmd, void *conf);
 
 static void * ngx_http_upstream_jdomain_create_conf(ngx_conf_t *cf);
 
 static ngx_int_t ngx_http_upstream_jdomain_init(ngx_conf_t *cf, 
 	ngx_http_upstream_srv_conf_t *us);
+
+static ngx_int_t ngx_http_upstream_jdomain_init_process(ngx_cycle_t *cycle);
 
 static ngx_int_t ngx_http_upstream_jdomain_init_peer(ngx_http_request_t *r,
 	ngx_http_upstream_srv_conf_t *us);
@@ -90,6 +106,20 @@ static ngx_command_t  ngx_http_upstream_jdomain_commands[] = {
 	 0,
 	 NULL },
 
+	{ngx_string("jdomain_resolver"),
+	 NGX_HTTP_UPS_CONF|NGX_CONF_1MORE,
+	 ngx_http_upstream_jdomain_resolver,
+	 NGX_HTTP_SRV_CONF_OFFSET,
+	 0,
+	 NULL },
+
+	{ngx_string("jdomain_resolver_timeout"),
+	 NGX_HTTP_UPS_CONF|NGX_CONF_TAKE1,
+	 ngx_conf_set_msec_slot,
+	 NGX_HTTP_SRV_CONF_OFFSET,
+	 offsetof(ngx_http_upstream_jdomain_srv_conf_t, resolver_timeout),
+	 NULL },
+
 	 ngx_null_command
 };
 
@@ -98,7 +128,7 @@ static ngx_http_module_t  ngx_http_upstream_jdomain_module_ctx = {
 	NULL,						/* preconfiguration */
 	NULL,						/* postconfiguration */
 
-	NULL,						/* create main configuration */
+	ngx_http_upstream_jdomain_create_main_conf,	/* create main configuration */
 	NULL,						/* init main configuration */
 
 	ngx_http_upstream_jdomain_create_conf,		/* create server configuration */
@@ -116,7 +146,7 @@ ngx_module_t  ngx_http_upstream_jdomain_module = {
 	NGX_HTTP_MODULE,				/* module type */
 	NULL,						/* init master */
 	NULL,						/* init module */
-	NULL,						/* init process */
+	ngx_http_upstream_jdomain_init_process,	/* init process */
 	NULL,						/* init thread */
 	NULL,						/* exit thread */
 	NULL,						/* exit process */
@@ -252,6 +282,9 @@ ngx_http_upstream_jdomain_load_peers(ngx_http_upstream_jdomain_srv_conf_t *urcf,
 										NGX_FILE_RDONLY,
 										NGX_FILE_DEFAULT_ACCESS);
 	if (file.fd == NGX_INVALID_FILE) {
+		if (ngx_errno == NGX_ENOENT || ngx_errno == NGX_ENOPATH) {
+			return NGX_OK;
+		}
 		ngx_log_error(NGX_LOG_ERR, log, 0,
 				"upstream_jdomain_load_peers: opening dump file \"%V\" failed",
 				&urcf->upstream_backup_file);
@@ -403,12 +436,25 @@ error:
 static ngx_int_t
 ngx_http_upstream_jdomain_init(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
 {
-	ngx_http_upstream_jdomain_srv_conf_t	*urcf;
+	ngx_http_upstream_jdomain_main_conf_t	*jmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_upstream_jdomain_module);
+	ngx_http_upstream_jdomain_srv_conf_t	*urcf, *urcf_next;
 
 	us->peer.init = ngx_http_upstream_jdomain_init_peer;
 
 	urcf = ngx_http_conf_upstream_srv_conf(us, ngx_http_upstream_jdomain_module);
+
+	if (urcf->resolver == NULL) {
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "no jdomain resolver");
+		return NGX_ERROR;
+	}
+	if (urcf->resolver_timeout == NGX_CONF_UNSET_MSEC) {
+		urcf->resolver_timeout = 30000;
+	}
 	urcf->resolved_status = NGX_JDOMAIN_STATUS_DONE;
+
+	urcf_next = jmcf->urcf_first;
+	jmcf->urcf_first = urcf;
+	urcf->next = urcf_next;
 
 	return NGX_OK;
 }
@@ -516,8 +562,8 @@ ngx_http_upstream_jdomain_get_peer(ngx_peer_connection_t *pc, void *data)
 	pc->connection = NULL;
 
 	ngx_http_upstream_jdomain_resolve_start(urcf,
-		urpd->clcf->resolver,
-		urpd->clcf->resolver_timeout,
+		urcf->resolver,
+		urcf->resolver_timeout,
 		pc->log);
 
 	/* If the resolution failed during startup or if resolution returned no entries,
@@ -716,7 +762,7 @@ ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
 	urcf->resolved_num = 0;
 	/*urcf->resolved_index = 0;*/
-	urcf->resolved_access = ngx_time();
+	urcf->resolved_access = 0;
 
 	ngx_memzero(&u, sizeof(ngx_url_t));
 	u.url = value[1];
@@ -724,20 +770,19 @@ ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
 	// in no-fail (fail=0) mode, perform two-pass URL parsing:
 	// validate upstream URL on the first pass and exit on error
-	// perform domain name resolution on the second pass but do *not* exit with error on failure
+	// perform domain name resolution on the second pass with jdomain_resolver
+	// by each worker in ngx_http_upstream_jdomain_init_process() but do *not*
+	// exit with error on failure
 	//
-	// in default (fail=1) mode, skip the first pass and exit on error
-	for (i = fail; i < 2; i++) {
-		u.no_resolve = i == 0;
-		if (ngx_parse_url(cf->pool, &u) != NGX_OK) {
-			if (u.err) {
-				ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-					"%s in upstream \"%V\"", u.err, &u.url);
-			}
-			if (u.no_resolve || fail) {
-				return NGX_CONF_ERROR;
-			}
+	// in default (fail=1) mode, skip the first pass, resolve with the system
+	// resolver immediatelly and exit on error
+	u.no_resolve = !fail;
+	if (ngx_parse_url(cf->pool, &u) != NGX_OK) {
+		if (u.err) {
+			ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+				"%s in upstream \"%V\"", u.err, &u.url);
 		}
+		return NGX_CONF_ERROR;
 	}
 
 	for(i = 0; i < u.naddrs ;i++){
@@ -760,9 +805,10 @@ ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 	}
 
 	if (u.naddrs > 0 && !u.no_resolve) {
+		urcf->resolved_access = ngx_time();
 		ngx_http_upstream_jdomain_dump_peers(urcf, cf->log);
 	}
-	else if (ngx_http_upstream_jdomain_load_peers(urcf, cf->pool, cf->log) != NGX_OK) {
+	else if (ngx_http_upstream_jdomain_load_peers(urcf, cf->temp_pool, cf->log) != NGX_OK) {
 		if (fail) {
 			return NGX_CONF_ERROR;
 		}
@@ -777,6 +823,39 @@ invalid:
 	return NGX_CONF_ERROR;
 }
 
+static char *
+ngx_http_upstream_jdomain_resolver(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+	ngx_http_upstream_jdomain_srv_conf_t *urcf = conf;
+	ngx_str_t  *value;
+
+	if (urcf->resolver) {
+		return "is duplicate";
+	}
+
+	value = cf->args->elts;
+
+	urcf->resolver = ngx_resolver_create(cf, &value[1], cf->args->nelts - 1);
+	if (urcf->resolver == NULL) {
+		return NGX_CONF_ERROR;
+	}
+
+	return NGX_CONF_OK;
+}
+
+static void *
+ngx_http_upstream_jdomain_create_main_conf(ngx_conf_t *cf)
+{
+	ngx_http_upstream_jdomain_main_conf_t	*jmcf;
+
+	jmcf = ngx_pcalloc(cf->pool, sizeof(*jmcf));
+	if (jmcf == NULL) {
+		return NULL;
+	}
+
+	return jmcf;
+}
+
 static void *
 ngx_http_upstream_jdomain_create_conf(ngx_conf_t *cf)
 {
@@ -787,6 +866,7 @@ ngx_http_upstream_jdomain_create_conf(ngx_conf_t *cf)
 	if (conf == NULL) {
 		return NULL;
 	}
+	conf->resolver_timeout = NGX_CONF_UNSET_MSEC;
 
 	return conf;
 }
@@ -864,6 +944,35 @@ end:
 
 	urcf->resolved_access = ngx_time();
 	urcf->resolved_status = NGX_JDOMAIN_STATUS_DONE;
+}
+
+static ngx_int_t
+ngx_http_upstream_jdomain_init_process(ngx_cycle_t *cycle)
+{
+	ngx_http_upstream_jdomain_main_conf_t	*jmcf;
+	ngx_http_upstream_jdomain_srv_conf_t	*urcf;
+	ngx_pool_t *temp_pool;
+
+	ngx_time_update();
+
+	temp_pool = ngx_create_pool(NGX_DEFAULT_POOL_SIZE, cycle->log);
+	if (temp_pool == NULL) {
+		return NGX_ERROR;
+	}
+
+	jmcf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_upstream_jdomain_module);
+	for (urcf = jmcf->urcf_first; urcf != NULL; urcf = urcf->next) {
+		ngx_http_upstream_jdomain_load_peers(urcf, temp_pool, cycle->log);
+
+		if (urcf->resolved_num > 0)
+			continue;
+
+		ngx_http_upstream_jdomain_resolve_start(urcf,
+			urcf->resolver, urcf->resolver_timeout, cycle->log);
+	}
+	ngx_destroy_pool(temp_pool);
+
+	return NGX_OK;
 }
 
 #if (NGX_HTTP_SSL)
