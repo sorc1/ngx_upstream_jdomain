@@ -86,7 +86,7 @@ static ngx_command_t  ngx_http_upstream_jdomain_commands[] = {
 	{ngx_string("jdomain"),
 	 NGX_HTTP_UPS_CONF|NGX_CONF_1MORE,
 	 ngx_http_upstream_jdomain,
-	 0,
+	 NGX_HTTP_SRV_CONF_OFFSET,
 	 0,
 	 NULL },
 
@@ -553,7 +553,7 @@ static char *
 ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
 	ngx_http_upstream_srv_conf_t  *uscf;
-	ngx_http_upstream_jdomain_srv_conf_t *urcf;
+	ngx_http_upstream_jdomain_srv_conf_t *urcf = conf;
 
 #if (nginx_version) >= 1007003
 	ngx_http_upstream_server_t	*us;
@@ -600,9 +600,6 @@ ngx_http_upstream_jdomain(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 	ngx_memzero(us, sizeof(ngx_http_upstream_server_t));
 #endif
 	
-	urcf = ngx_http_conf_upstream_srv_conf(uscf,
-					ngx_http_upstream_jdomain_module);
-
 	uscf->peer.init_upstream = ngx_http_upstream_jdomain_init;
 
 	value = cf->args->elts;
