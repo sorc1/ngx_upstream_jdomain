@@ -452,44 +452,40 @@ ngx_http_upstream_jdomain_init_peer(ngx_http_request_t *r,
 	return NGX_OK;
 }
 
-static ngx_int_t
-ngx_http_upstream_jdomain_get_peer(ngx_peer_connection_t *pc, void *data)
+static void
+ngx_http_upstream_jdomain_resolve_start(
+	ngx_http_upstream_jdomain_srv_conf_t *urcf, ngx_resolver_t *resolver,
+	ngx_msec_t resolver_timeout, ngx_log_t *log)
 {
-	ngx_http_upstream_jdomain_peer_data_t	*urpd = data;
-	ngx_http_upstream_jdomain_srv_conf_t	*urcf = urpd->conf;
-	ngx_resolver_ctx_t			*ctx;
-	ngx_http_upstream_jdomain_peer_t				*peer;
- 
-	pc->cached = 0;
-	pc->connection = NULL;
+	ngx_resolver_ctx_t	*ctx;
 
 	if(urcf->resolved_status == NGX_JDOMAIN_STATUS_WAIT){
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
 			"upstream_jdomain: resolving"); 
-		goto assign;
+		return;
 	}
 
 	if(ngx_time() <= urcf->resolved_access + urcf->resolved_interval){
-		goto assign;
+		return;
 	}
 
-	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
 		"upstream_jdomain: update from DNS cache"); 
 
-	ctx = ngx_resolve_start(urpd->clcf->resolver, NULL);
+	ctx = resolver ? ngx_resolve_start(resolver, NULL) : NGX_NO_RESOLVER;
 	if(ctx == NULL) {
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
 			"upstream_jdomain: resolve_start fail"); 
-		goto assign;
+		return;
 	}
 
 	if(ctx == NGX_NO_RESOLVER) {
-		ngx_log_error(NGX_LOG_ALERT, pc->log, 0,
+		ngx_log_error(NGX_LOG_ALERT, log, 0,
 			"upstream_jdomain: no resolver"); 
-		goto assign;
+		return;
 	}
 
-	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
 		"upstream_jdomain: resolve_start ok"); 
 
 	ctx->name = urcf->resolved_domain;
@@ -498,17 +494,32 @@ ngx_http_upstream_jdomain_get_peer(ngx_peer_connection_t *pc, void *data)
 #endif
 	ctx->handler = ngx_http_upstream_jdomain_handler;
 	ctx->data = urcf;
-	ctx->timeout = urpd->clcf->resolver_timeout;
+	ctx->timeout = resolver_timeout;
 
 	urcf->resolved_status = NGX_JDOMAIN_STATUS_WAIT;
 	if(ngx_resolve_name(ctx) != NGX_OK) {
-		ngx_log_error(NGX_LOG_ALERT, pc->log, 0,
+		ngx_log_error(NGX_LOG_ALERT, log, 0,
 			"upstream_jdomain: resolve name \"%V\" fail", &ctx->name);
 		urcf->resolved_access = ngx_time();
 		urcf->resolved_status = NGX_JDOMAIN_STATUS_DONE;
 	}
+}
 
-assign:
+static ngx_int_t
+ngx_http_upstream_jdomain_get_peer(ngx_peer_connection_t *pc, void *data)
+{
+	ngx_http_upstream_jdomain_peer_data_t	*urpd = data;
+	ngx_http_upstream_jdomain_srv_conf_t	*urcf = urpd->conf;
+	ngx_http_upstream_jdomain_peer_t		*peer;
+
+	pc->cached = 0;
+	pc->connection = NULL;
+
+	ngx_http_upstream_jdomain_resolve_start(urcf,
+		urpd->clcf->resolver,
+		urpd->clcf->resolver_timeout,
+		pc->log);
+
 	/* If the resolution failed during startup or if resolution returned no entries,
 	   fail all requests until it recovers */
 	if (urcf->resolved_num == 0) {
