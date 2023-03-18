@@ -193,7 +193,7 @@ ngx_http_upstream_jdomain_dump_peers(ngx_http_upstream_jdomain_srv_conf_t *urcf,
 						NGX_FILE_WRONLY,
 						NGX_FILE_DEFAULT_ACCESS);
 	if (file.fd == NGX_INVALID_FILE) {
-		ngx_log_error(NGX_LOG_ERR, log, 0, "upstream_jdomain_dump_peers: "
+		ngx_log_error(NGX_LOG_ERR, log, ngx_errno, "upstream_jdomain_dump_peers: "
 						"open dump file \"%s\" failed",
 						tempfile);
 		goto error;
@@ -219,7 +219,7 @@ ngx_http_upstream_jdomain_dump_peers(ngx_http_upstream_jdomain_srv_conf_t *urcf,
 	buf_len = buf_pos - buf;
 
 	if (ngx_write_file(&file, buf, buf_len, 0) != buf_len) {
-		ngx_log_error(NGX_LOG_ERR, log, 0, "upstream_jdomain_dump_peers: "
+		ngx_log_error(NGX_LOG_ERR, log, ngx_errno, "upstream_jdomain_dump_peers: "
 							"write file failed %V",
 							&urcf->upstream_backup_file);
 		goto error;
@@ -233,7 +233,7 @@ ngx_http_upstream_jdomain_dump_peers(ngx_http_upstream_jdomain_srv_conf_t *urcf,
 	file.fd = NGX_INVALID_FILE;
 
 	if (ngx_rename_file(tempfile, urcf->upstream_backup_file.data) != 0) {
-		ngx_log_error(NGX_LOG_EMERG, log, 0, "upstream_jdomain_dump_peers: "
+		ngx_log_error(NGX_LOG_EMERG, log, ngx_errno, "upstream_jdomain_dump_peers: "
 				"renaming \"%s\" to \"%V\" failed",
 				tempfile, &urcf->upstream_backup_file);
 		goto error;
@@ -285,15 +285,15 @@ ngx_http_upstream_jdomain_load_peers(ngx_http_upstream_jdomain_srv_conf_t *urcf,
 		if (ngx_errno == NGX_ENOENT || ngx_errno == NGX_ENOPATH) {
 			return NGX_OK;
 		}
-		ngx_log_error(NGX_LOG_ERR, log, 0,
+		ngx_log_error(NGX_LOG_ERR, log, ngx_errno,
 				"upstream_jdomain_load_peers: opening dump file \"%V\" failed",
 				&urcf->upstream_backup_file);
 		goto error;
 	}
 
 	buf_len = ngx_read_file(&file, (u_char *)buf, sizeof(buf) - 2, 0);
-	if (buf_len <= 0) {
-		ngx_log_error(NGX_LOG_ERR, log, 0,
+	if (buf_len < 0) {
+		ngx_log_error(NGX_LOG_ERR, log, ngx_errno,
 				"upstream_jdomain_load_peers: reading dump file \"%V\" failed",
 				&urcf->upstream_backup_file);
 		goto error;
