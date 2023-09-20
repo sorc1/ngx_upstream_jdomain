@@ -48,6 +48,7 @@ typedef struct ngx_http_upstream_jdomain_srv_conf {
 
 	ngx_resolver_t	*resolver;
 	ngx_msec_t		resolver_timeout;
+	ngx_event_t		refresh;
 
 	struct ngx_http_upstream_jdomain_srv_conf *next;
 } ngx_http_upstream_jdomain_srv_conf_t;
@@ -451,6 +452,7 @@ ngx_http_upstream_jdomain_init(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
 		urcf->resolver_timeout = 30000;
 	}
 	urcf->resolved_status = NGX_JDOMAIN_STATUS_DONE;
+	urcf->refresh.log = urcf->resolver->log;
 
 	urcf_next = jmcf->urcf_first;
 	jmcf->urcf_first = urcf;
@@ -498,10 +500,23 @@ ngx_http_upstream_jdomain_init_peer(ngx_http_request_t *r,
 	return NGX_OK;
 }
 
+void
+ngx_http_upstream_jdomain_timer_restart(
+	ngx_http_upstream_jdomain_srv_conf_t *urcf, time_t refresh_interval)
+{
+	if (!ngx_exiting) {
+		ngx_resolver_t *r = urcf->resolver;
+		ngx_log_error(NGX_LOG_INFO, r->log, 0,
+			          "ngx_http_upstream_jdomain_timer_restart: restart resolving after %ds",
+			          refresh_interval);
+		ngx_add_timer(&urcf->refresh, refresh_interval * 1000);
+	}
+}
+
 static void
 ngx_http_upstream_jdomain_resolve_start(
 	ngx_http_upstream_jdomain_srv_conf_t *urcf, ngx_resolver_t *resolver,
-	ngx_msec_t resolver_timeout, ngx_log_t *log)
+	ngx_msec_t resolver_timeout, ngx_log_t *log, ngx_uint_t force)
 {
 	ngx_resolver_ctx_t	*ctx;
 
@@ -511,7 +526,8 @@ ngx_http_upstream_jdomain_resolve_start(
 		return;
 	}
 
-	if(ngx_time() <= urcf->resolved_access + urcf->resolved_interval){
+	if (!force &&
+	    ngx_time() <= urcf->resolved_access + urcf->resolved_interval) {
 		return;
 	}
 
@@ -548,6 +564,7 @@ ngx_http_upstream_jdomain_resolve_start(
 			"upstream_jdomain: resolve name \"%V\" fail", &ctx->name);
 		urcf->resolved_access = ngx_time();
 		urcf->resolved_status = NGX_JDOMAIN_STATUS_DONE;
+		ngx_http_upstream_jdomain_timer_restart(urcf, urcf->resolved_interval);
 	}
 }
 
@@ -564,7 +581,8 @@ ngx_http_upstream_jdomain_get_peer(ngx_peer_connection_t *pc, void *data)
 	ngx_http_upstream_jdomain_resolve_start(urcf,
 		urcf->resolver,
 		urcf->resolver_timeout,
-		pc->log);
+		pc->log,
+		0);
 
 	/* If the resolution failed during startup or if resolution returned no entries,
 	   fail all requests until it recovers */
@@ -823,6 +841,21 @@ invalid:
 	return NGX_CONF_ERROR;
 }
 
+void
+ngx_http_upstream_jdomain_refresh(ngx_event_t *ev)
+{
+	ngx_http_upstream_jdomain_srv_conf_t *urcf = ev->data;
+	ngx_resolver_t *r = urcf->resolver;
+	ngx_log_error(NGX_LOG_INFO, r->log, 0,
+	              "ngx_http_upstream_jdomain_refresh: timer expired, restart resolving");
+
+	ngx_http_upstream_jdomain_resolve_start(urcf,
+		urcf->resolver,
+		urcf->resolver_timeout,
+		r->log,
+		1);
+}
+
 static char *
 ngx_http_upstream_jdomain_resolver(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
@@ -839,6 +872,10 @@ ngx_http_upstream_jdomain_resolver(ngx_conf_t *cf, ngx_command_t *cmd, void *con
 	if (urcf->resolver == NULL) {
 		return NGX_CONF_ERROR;
 	}
+
+	urcf->refresh.handler = ngx_http_upstream_jdomain_refresh;
+	urcf->refresh.data = conf;
+	urcf->refresh.cancelable = 1;
 
 	return NGX_CONF_OK;
 }
@@ -871,6 +908,13 @@ ngx_http_upstream_jdomain_create_conf(ngx_conf_t *cf)
 	return conf;
 }
 
+static time_t ngx_http_upstream_jdomain_next_resolve(ngx_resolver_ctx_t *ctx)
+{
+	/* We couldn't directly get ngx_resolver_node_t::ttl, but ctx->valid should be
+	   filled with ngx_time() + min_ttl */
+	return (ctx->valid > ngx_time()) ? (ctx->valid - ngx_time()) : 1;
+}
+
 static void
 ngx_http_upstream_jdomain_handler(ngx_resolver_ctx_t *ctx)
 {
@@ -879,6 +923,7 @@ ngx_http_upstream_jdomain_handler(ngx_resolver_ctx_t *ctx)
 	ngx_resolver_t		*r;
 	ngx_http_upstream_jdomain_peer_t		*peer;
 	ngx_http_upstream_jdomain_srv_conf_t	*urcf = ctx->data;
+	time_t next_resolve;
 
 	r = ctx->resolver;
 
@@ -940,8 +985,10 @@ ngx_http_upstream_jdomain_handler(ngx_resolver_ctx_t *ctx)
 	ngx_http_upstream_jdomain_dump_peers(urcf, r->log);
 
 end:
+	next_resolve = ngx_http_upstream_jdomain_next_resolve(ctx);
 	ngx_resolve_name_done(ctx);
 
+	ngx_http_upstream_jdomain_timer_restart(urcf, next_resolve);
 	urcf->resolved_access = ngx_time();
 	urcf->resolved_status = NGX_JDOMAIN_STATUS_DONE;
 }
@@ -964,11 +1011,8 @@ ngx_http_upstream_jdomain_init_process(ngx_cycle_t *cycle)
 	for (urcf = jmcf->urcf_first; urcf != NULL; urcf = urcf->next) {
 		ngx_http_upstream_jdomain_load_peers(urcf, temp_pool, cycle->log);
 
-		if (urcf->resolved_num > 0)
-			continue;
-
 		ngx_http_upstream_jdomain_resolve_start(urcf,
-			urcf->resolver, urcf->resolver_timeout, cycle->log);
+			urcf->resolver, urcf->resolver_timeout, cycle->log, 1);
 	}
 	ngx_destroy_pool(temp_pool);
 
