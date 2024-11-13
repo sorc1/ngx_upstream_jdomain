@@ -7,3 +7,12 @@ ngx_module_srcs="$ngx_addon_dir/ngx_upstream_jdomain.c $ngx_addon_dir/ngx_http_u
 ngx_module_incs="$ngx_module_incs $ngx_addon_dir"
 
 . auto/module
+
+ngx_feature="stream upstream jdomain module"
+ngx_module_type=STREAM
+ngx_module_name=ngx_stream_upstream_jdomain_module
+ngx_module_deps=""
+ngx_module_srcs="$ngx_addon_dir/ngx_stream_upstream_jdomain.c"
+ngx_module_incs="$ngx_module_incs $ngx_addon_dir"
+
+. auto/module
